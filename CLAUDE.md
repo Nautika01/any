@@ -8,12 +8,19 @@
 - `src/collect.py` — 수집기(표준 라이브러리만 사용). GitHub Actions가 15분마다 실행해 `data/`에 커밋한다.
 - `data/raw/YYYY-MM-DD.csv.gz` — `ts, station_id, bikes` (KST). gzip 조각을 이어붙인 파일.
 - `data/stations.csv`, `data/weather/YYYY-MM.csv` — 대여소 정보, 수집 시각의 서울 날씨.
+- `src/data.py` — 원본을 15분 격자(시각 × 대여소) 표로 변환. 빠진 눈금은 NaN으로 둔다.
+- `src/baselines.py` — 기준선 2종. 예측 표는 항상 목표 시각 기준으로 정렬한다.
+- `src/features.py` — 학습용 표. 새 특성을 넣으면 `tests/test_pipeline.py`의 누수 테스트가 통과해야 한다.
+- `src/evaluate.py` — 시간 순서 분할과 MAE. 모든 모델이 예측한 칸에서만 채점한다. 새 모델은 `evaluate()`에 넣어 기준선과 함께 잰다.
+- `src/health.py` — 수집 상태 점검.
 - `experiments.md` — 실험 기록.
 
 ## 명령
 
 - 테스트: `python3 -m pytest -q tests`
 - 수집: `SEOUL_API_KEY=... python3 src/collect.py`
+- 수집 상태: `python3 src/health.py`
+- 기준선 평가: `python3 src/evaluate.py [검증 일수]`
 
 클라우드 세션에서는 따릉이 API(openapi.seoul.go.kr:8088, 일반 HTTP)에 접속할 수 없다.
 수집기 변경은 가짜 응답 테스트로 확인하고, 실제 호출은 GitHub Actions 실행 결과로 확인한다.

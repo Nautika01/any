@@ -6,8 +6,10 @@
 
 - [x] 수집기: 대여소 실시간 현황 + 서울 날씨 (`src/collect.py`)
 - [x] 자동 수집: GitHub Actions 15분 주기 (`.github/workflows/collect.yml`)
-- [ ] 탐색 분석: 시간대·요일·날씨별 패턴
-- [ ] 예측 모델: 기준선(직전 값, 지난주 같은 시각) 대비 성능 비교
+- [x] 분석 뼈대: 15분 격자 변환, 기준선 2종, 학습용 특성, 평가, 수집 상태 점검 (`src/`)
+- [ ] 탐색 분석: 시간대·요일·날씨별 패턴 (데이터 수일분 필요)
+- [ ] 기준선 측정 (1주일분 필요)
+- [ ] 예측 모델: 기준선 대비 성능 비교 (2주일분 필요)
 - [ ] 예측 정확도 모니터링 화면
 
 ## 데이터
@@ -28,6 +30,14 @@ SEOUL_API_KEY=발급받은키 python src/collect.py
 
 ```bash
 python -m pytest tests
+```
+
+```bash
+python src/health.py
+```
+
+```bash
+python src/evaluate.py
 ```
 
 자동 수집을 켜려면 저장소 Settings → Secrets and variables → Actions 에 `SEOUL_API_KEY` 를 등록한다.
