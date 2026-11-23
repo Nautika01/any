@@ -9,7 +9,7 @@
   - 학습 행: 학습 행을 5묶음으로 나눠 자기 묶음을 뺀 나머지에서 센다. 어떤 행도 자기 정답을 보지 않는다.
     묶음을 나누는 시드(--enc-seed)를 바꿔 여러 번 돌린 뒤 blend.py로 평균하면 인코딩 잡음이 줄어든다.
 
-사용법:  python train_te.py <실험이름> [--stage glm|trees] [--no-digits] [--shuffle-check] [--enc-seed N]
+사용법:  python train_te.py <실험이름> [--stage glm|trees] [--no-digits] [--shuffle-check] [--enc-seed N] [--joint N] [--counts]
 결과:    out/<실험이름>_oof.npy, out/<실험이름>_submission.csv
 """
 from __future__ import annotations
@@ -71,6 +71,30 @@ def make_keys(df: pd.DataFrame, digits: bool = True) -> dict[str, np.ndarray]:
     return keys
 
 
+# 두 열의 효과가 단순 합이 아닌 쌍(megayak의 공개 노트북이 전체 276쌍을 훑어 고른 13쌍). "q:"는 10분위.
+JOINT = [("merchant_category", "merchant_risk_score"), ("is_foreign_transaction", "ip_country_mismatch"),
+         ("merchant_category", "q:amount_usd"), ("txn_count_last_24h", "q:velocity_score"),
+         ("merchant_category", "customer_age"), ("q:amount_usd", "q:merchant_risk_score"),
+         ("q:hours_since_last_txn", "q:velocity_score"), ("customer_age", "q:merchant_risk_score"),
+         ("is_new_merchant", "day_of_week"), ("is_ai_generated_scam_attempt", "q:velocity_score"),
+         ("customer_age", "card_age_months"), ("time_of_day_hour", "day_of_week"),
+         ("txn_count_last_24h", "customer_age")]
+
+
+def make_joint_keys(df: pd.DataFrame, n_pairs: int) -> dict[str, np.ndarray]:
+    """열 쌍을 하나의 키로 묶는다(정답을 쓰지 않는다). 앞에서부터 n_pairs개."""
+    def part(c: str) -> np.ndarray:
+        if c.startswith("q:"):
+            return pd.qcut(df[c[2:]], 10, labels=False, duplicates="drop").to_numpy()
+        return pd.factorize(df[c])[0]
+
+    keys = {}
+    for a, b in JOINT[:n_pairs]:
+        pa, pb = part(a), part(b)
+        keys[f"{a}*{b}"] = np.unique(pa.astype(np.int64) * (pb.max() + 1) + pb, return_inverse=True)[1]
+    return keys
+
+
 def encode(codes: np.ndarray, y: np.ndarray, group: np.ndarray, n_groups: int) -> np.ndarray:
     """키 코드를 평활한 사기율(로짓)로 바꾼다.
 
@@ -109,10 +133,19 @@ def make_groups(fold: np.ndarray, holdout: int | None, enc_seed: int) -> np.ndar
     return group
 
 
-def build_matrix(df, keys, y, group):
-    """모델 입력. 인코딩(로짓) + 원본 수치 + 값 빈도 + 참/거짓."""
+def build_matrix(df, keys, y, group, joint=None, counts=False):
+    """모델 입력. 인코딩(로짓) + 원본 수치 + 값 빈도 + 참/거짓.
+
+    열 이름 머리말: "te|" 인코딩, "tej|" 결합 키 인코딩(GLM만 본다), "cnt|" 키별 행 수(나무만 본다).
+    """
     yf = y.astype(float)
     cols = {f"te|{k}": encode(code, yf, group, FOLDS) for k, code in keys.items()}
+    for k, code in (joint or {}).items():
+        cols[f"tej|{k}"] = encode(code, yf, group, FOLDS)
+    if counts:  # 그 키 값을 가진 행이 학습+테스트에 몇 개인지. 인코딩을 얼마나 믿을지 나무가 알 수 있다
+        for k, code in keys.items():
+            if not (k.endswith("|value") and k.split("|")[0] in DECIMALS):  # 이 열들은 아래 freq|에 이미 있다
+                cols[f"cnt|{k}"] = np.log(np.bincount(code)[code])
     for c in DECIMALS + INTS:
         cols[c] = df[c].to_numpy(dtype=float)
     for c in DECIMALS:  # 정확히 같은 값이 학습+테스트에 몇 번 나오는지(정답을 쓰지 않는다)
@@ -130,8 +163,9 @@ def fit_glm(X, y, fit_rows):
     from sklearn.pipeline import make_pipeline
     from sklearn.preprocessing import QuantileTransformer, StandardScaler
 
-    raw = [c for c in X.columns if not c.startswith("te|") and c not in FLAGS]
-    te = [c for c in X.columns if c.startswith("te|")]
+    X = X[[c for c in X.columns if not c.startswith("cnt|")]]
+    raw = [c for c in X.columns if not c.startswith("te") and c not in FLAGS]
+    te = [c for c in X.columns if c.startswith("te")]
     from sklearn.compose import ColumnTransformer
     pre = ColumnTransformer([
         ("raw", QuantileTransformer(n_quantiles=200, output_distribution="normal",
@@ -148,6 +182,7 @@ def fit_trees(X, y, margin, fit_rows, stop_rows=None, rounds=None):
     """GLM의 로그 오즈에서 출발하는 잎 4개 나무. 나무는 GLM이 놓친 부분만 맞춘다."""
     import lightgbm as lgb
 
+    X = X[[c for c in X.columns if not c.startswith("tej|")]]
     params = dict(objective="binary", learning_rate=0.03, num_leaves=4, min_data_in_leaf=200,
                   feature_fraction=0.5, bagging_fraction=0.8, bagging_freq=1, lambda_l2=10,
                   seed=SEED, verbose=-1, num_threads=4)
@@ -164,7 +199,7 @@ def fit_trees(X, y, margin, fit_rows, stop_rows=None, rounds=None):
 
 
 def run(name: str, stage: str = "trees", digits: bool = True, shuffle: bool = False,
-        enc_seed: int = 0) -> float:
+        enc_seed: int = 0, n_joint: int = 0, counts: bool = False) -> float:
     from sklearn.model_selection import train_test_split
 
     train, test = load()
@@ -178,12 +213,13 @@ def run(name: str, stage: str = "trees", digits: bool = True, shuffle: bool = Fa
 
     both = pd.concat([train.drop(columns=TARGET), test], ignore_index=True)
     keys = make_keys(both, digits)
-    print(f"키 {len(keys)}개", flush=True)
+    joint = make_joint_keys(both, n_joint)
+    print(f"키 {len(keys)}개, 결합 키 {len(joint)}개", flush=True)
 
     all_rows, test_rows = np.arange(n), np.arange(n, len(both))
     oof, scores, rounds_used = np.zeros(n), [], []
     for f in range(1 if shuffle else FOLDS):
-        X = build_matrix(both, keys, y, make_groups(fold, f, enc_seed))
+        X = build_matrix(both, keys, y, make_groups(fold, f, enc_seed), joint, counts)
         tr, va = np.flatnonzero(fold != f), np.flatnonzero(fold == f)
         glm = fit_glm(X, y, tr)
         margin = np.zeros(len(both))
@@ -207,7 +243,7 @@ def run(name: str, stage: str = "trees", digits: bool = True, shuffle: bool = Fa
     print(f"{name}: CV AUC {total:.5f} (겹별 평균 {np.mean(scores):.5f} ± {np.std(scores):.5f})")
 
     # 테스트 예측은 전체 학습 행으로 한 번 더 맞춘 모델로 만든다(인코딩을 더 많은 행에서 센다).
-    X = build_matrix(both, keys, y, make_groups(fold, None, enc_seed))
+    X = build_matrix(both, keys, y, make_groups(fold, None, enc_seed), joint, counts)
     glm = fit_glm(X, y, all_rows)
     margin = np.zeros(len(both))
     margin[:] = glm(np.arange(len(both)))
@@ -233,5 +269,8 @@ if __name__ == "__main__":
     ap.add_argument("--shuffle-check", action="store_true", help="정답을 섞어 누수를 점검한다")
     ap.add_argument("--enc-seed", type=int, default=0,
                     help="인코딩용 학습 행 분할의 시드. 0은 바깥 겹 그대로, 그 밖은 무작위 5등분")
+    ap.add_argument("--joint", type=int, default=0, metavar="N",
+                    help="결합 키를 앞에서 N개까지 GLM에 넣는다(최대 13)")
+    ap.add_argument("--counts", action="store_true", help="키별 행 수를 나무에 넣는다")
     a = ap.parse_args()
-    run(a.name, a.stage, not a.no_digits, a.shuffle_check, a.enc_seed)
+    run(a.name, a.stage, not a.no_digits, a.shuffle_check, a.enc_seed, a.joint, a.counts)
