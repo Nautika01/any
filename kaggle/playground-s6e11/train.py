@@ -131,7 +131,8 @@ def fit_predict_catboost(Xtr, ytr, Xva, Xte):
         conv(Xtr), ytr, test_size=0.1, stratify=ytr, random_state=SEED)
     params = dict(iterations=5000, learning_rate=0.05, depth=4, l2_leaf_reg=5,
                   eval_metric="AUC", random_seed=SEED, verbose=0, thread_count=4,
-                  cat_features=cats, od_type="Iter", od_wait=200)
+                  cat_features=cats, od_type="Iter", od_wait=200,
+                  train_dir=str(HERE / "out" / "catboost_info"))
     params.update(LGBM_OVERRIDES)
     model = CatBoostClassifier(**params)
     model.fit(Xfit, yfit, eval_set=(Xstop, ystop), use_best_model=True)

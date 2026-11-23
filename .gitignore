@@ -3,3 +3,4 @@ __pycache__/
 .env
 kaggle/*/data/
 kaggle/*/out/
+catboost_info/
