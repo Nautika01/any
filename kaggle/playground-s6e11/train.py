@@ -56,15 +56,23 @@ def fit_predict_logreg(Xtr, ytr, Xva, Xte):
     return model.predict_proba(Xva)[:, 1], model.predict_proba(Xte)[:, 1], None
 
 
-def fit_predict_lgbm(Xtr, ytr, Xva, Xte, yva=None):
-    import lightgbm as lgb
+def fit_predict_lgbm(Xtr, ytr, Xva, Xte):
+    """학습 겹 안에서 10%를 따로 떼어 나무 개수(조기 종료)를 정한다.
 
+    검증 겹으로 멈출 시점을 고르면 그 겹의 점수가 실제보다 좋게 나온다.
+    검증 겹은 점수를 재는 데만 쓰고 학습 과정에서는 보지 않는다.
+    """
+    import lightgbm as lgb
+    from sklearn.model_selection import train_test_split
+
+    Xfit, Xstop, yfit, ystop = train_test_split(
+        Xtr, ytr, test_size=0.1, stratify=ytr, random_state=SEED)
     model = lgb.LGBMClassifier(
         n_estimators=5000, learning_rate=0.05, num_leaves=31,
         subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
         random_state=SEED, verbose=-1,
     )
-    model.fit(Xtr, ytr, eval_set=[(Xva, yva)], eval_metric="auc",
+    model.fit(Xfit, yfit, eval_set=[(Xstop, ystop)], eval_metric="auc",
               callbacks=[lgb.early_stopping(100, verbose=False)])
     return model.predict_proba(Xva)[:, 1], model.predict_proba(Xte)[:, 1], model.best_iteration_
 
@@ -82,7 +90,7 @@ def run(name: str, model: str, feats: str) -> float:
         if model == "logreg":
             p_va, p_te, it = fit_predict_logreg(X.iloc[tr], y[tr], X.iloc[va], Xte)
         else:
-            p_va, p_te, it = fit_predict_lgbm(X.iloc[tr], y[tr], X.iloc[va], Xte, y[va])
+            p_va, p_te, it = fit_predict_lgbm(X.iloc[tr], y[tr], X.iloc[va], Xte)
         oof[va] = p_va
         pred += p_te / FOLDS
         scores.append(roc_auc_score(y[va], p_va))
