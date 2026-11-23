@@ -1,4 +1,4 @@
-"""서울 따릉이 대여소 실시간 현황 + 날씨를 한 번 수집해 data/ 아래에 덧붙인다.
+"""서울 따릉이 대여소 실시간 현황 + 날씨·예보를 한 번 수집해 data/ 아래에 쓴다.
 
 사용법:  SEOUL_API_KEY=... python src/collect.py
 """
@@ -22,6 +22,7 @@ BIKE_URL = "http://openapi.seoul.go.kr:8088/{key}/json/bikeList/{start}/{end}/"
 WEATHER_URL = (
     "https://api.open-meteo.com/v1/forecast?latitude=37.5665&longitude=126.9780"
     "&current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m"
+    "&hourly=temperature_2m,precipitation,precipitation_probability&forecast_hours=3"
     "&timezone=Asia%2FSeoul"
 )
 PAGE = 1000  # API가 한 번에 허용하는 최대 행 수
@@ -66,18 +67,20 @@ def fetch_stations(key: str) -> list[dict]:
 
 
 def write_snapshot(rows: list[dict], now: datetime) -> Path:
-    """시각·대여소·자전거 수만 일별 gzip CSV에 덧붙인다(gzip은 이어붙이기가 가능하다)."""
-    path = DATA / "raw" / f"{now:%Y-%m-%d}.csv.gz"
+    """시각·대여소·자전거 수를 수집 1회당 파일 하나로 쓴다.
+
+    하루치를 한 파일에 덧붙이면 커밋마다 파일 전체가 git에 새로 쌓여
+    저장소가 빠르게 불어난다. 한 번 쓴 파일은 다시 건드리지 않는다.
+    """
+    path = DATA / "raw" / f"{now:%Y-%m-%d}" / f"{now:%H%M}.csv.gz"
     path.parent.mkdir(parents=True, exist_ok=True)
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
-    if not path.exists():
-        w.writerow(["ts", "station_id", "bikes"])
+    w.writerow(["ts", "station_id", "bikes"])
     ts = now.strftime("%Y-%m-%dT%H:%M")
     for r in rows:
         w.writerow([ts, r["stationId"], int(r["parkingBikeTotCnt"])])
-    with open(path, "ab") as f:
-        f.write(gzip.compress(buf.getvalue().encode()))
+    path.write_bytes(gzip.compress(buf.getvalue().encode(), mtime=0))
     return path
 
 
@@ -103,22 +106,39 @@ def write_stations(rows: list[dict]) -> None:
         w.writerows(known[k] for k in sorted(known))
 
 
+WEATHER_FIELDS = [
+    "ts", "temp_c", "humidity", "precip_mm", "wind_kmh",
+    "fc_temp_1h", "fc_temp_2h", "fc_precip_1h", "fc_precip_2h", "fc_pop_1h", "fc_pop_2h",
+]
+
+
+def weather_row(payload: dict, now: datetime) -> list:
+    """현재 날씨와, 지금 시점에 나와 있는 1·2시간 뒤 예보.
+
+    예보는 나중에 되돌려 받을 수 없으므로 수집 시점에 함께 남긴다. 예측 모델은
+    목표 시각의 실제 날씨를 미리 알 수 없으니 이 예보 값을 특성으로 써야 한다.
+    hourly[0] 이 현재 시각이 속한 정시, [1]·[2] 가 다음 두 정시다.
+    """
+    cur, h = payload["current"], payload["hourly"]
+    return [
+        now.strftime("%Y-%m-%dT%H:%M"),
+        cur["temperature_2m"], cur["relative_humidity_2m"], cur["precipitation"], cur["wind_speed_10m"],
+        h["temperature_2m"][1], h["temperature_2m"][2],
+        h["precipitation"][1], h["precipitation"][2],
+        h["precipitation_probability"][1], h["precipitation_probability"][2],
+    ]
+
+
 def write_weather(now: datetime) -> None:
-    cur = get_json(WEATHER_URL)["current"]
+    row = weather_row(get_json(WEATHER_URL), now)
     path = DATA / "weather" / f"{now:%Y-%m}.csv"
     path.parent.mkdir(parents=True, exist_ok=True)
     new = not path.exists()
     with open(path, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f, lineterminator="\n")
         if new:
-            w.writerow(["ts", "temp_c", "humidity", "precip_mm", "wind_kmh"])
-        w.writerow([
-            now.strftime("%Y-%m-%dT%H:%M"),
-            cur["temperature_2m"],
-            cur["relative_humidity_2m"],
-            cur["precipitation"],
-            cur["wind_speed_10m"],
-        ])
+            w.writerow(WEATHER_FIELDS)
+        w.writerow(row)
 
 
 def main() -> int:

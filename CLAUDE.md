@@ -6,14 +6,16 @@
 ## 구조
 
 - `src/collect.py` — 수집기(표준 라이브러리만 사용). GitHub Actions가 15분마다 실행해 `data/`에 커밋한다.
-- `data/raw/YYYY-MM-DD.csv.gz` — `ts, station_id, bikes` (KST). gzip 조각을 이어붙인 파일.
-- `data/stations.csv`, `data/weather/YYYY-MM.csv` — 대여소 정보, 수집 시각의 서울 날씨.
+- `data/raw/YYYY-MM-DD/HHMM.csv.gz` — `ts, station_id, bikes` (KST). 수집 1회당 파일 하나, 한 번 쓰면 고치지 않는다.
+- `data/stations.csv` — 대여소 정보.
+- `data/weather/YYYY-MM.csv` — 수집 시각의 서울 날씨와, 그 시점에 나와 있던 1·2시간 뒤 예보(`fc_*`). 모델 특성에는 실측이 아니라 `fc_*`를 쓴다.
 - `src/data.py` — 원본을 15분 격자(시각 × 대여소) 표로 변환. 빠진 눈금은 NaN으로 둔다.
 - `src/baselines.py` — 기준선 2종. 예측 표는 항상 목표 시각 기준으로 정렬한다.
 - `src/features.py` — 학습용 표. 새 특성을 넣으면 `tests/test_pipeline.py`의 누수 테스트가 통과해야 한다.
 - `src/evaluate.py` — 시간 순서 분할과 MAE. 모든 모델이 예측한 칸에서만 채점한다. 새 모델은 `evaluate()`에 넣어 기준선과 함께 잰다.
 - `src/health.py` — 수집 상태 점검.
 - `experiments.md` — 실험 기록.
+- `kaggle/` — 따릉이와 무관한 Kaggle 대회 작업. 대회별 폴더에 자체 README·실험 기록·규칙이 있다. 대회 데이터와 산출물은 커밋하지 않는다.
 
 ## 명령
 

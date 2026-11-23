@@ -1,2 +1,2 @@
-ts,temp_c,humidity,precip_mm,wind_kmh
-2026-11-23T09:55,5.2,78,0.0,7.4
+ts,temp_c,humidity,precip_mm,wind_kmh,fc_temp_1h,fc_temp_2h,fc_precip_1h,fc_precip_2h,fc_pop_1h,fc_pop_2h
+2026-11-23T09:55,5.2,78,0.0,7.4,,,,,,

@@ -16,9 +16,9 @@
 
 | 파일 | 내용 |
 |---|---|
-| `data/raw/YYYY-MM-DD.csv.gz` | `ts, station_id, bikes` — 수집 시각(KST), 대여소 ID, 거치된 자전거 수 |
+| `data/raw/YYYY-MM-DD/HHMM.csv.gz` | `ts, station_id, bikes` — 수집 시각(KST), 대여소 ID, 거치된 자전거 수. 수집 1회당 파일 하나 |
 | `data/stations.csv` | 대여소 이름, 위도·경도, 거치대 수 |
-| `data/weather/YYYY-MM.csv` | 수집 시각의 기온, 습도, 강수량, 풍속 (서울시청 기준) |
+| `data/weather/YYYY-MM.csv` | 수집 시각의 기온, 습도, 강수량, 풍속과 1·2시간 뒤 예보(기온, 강수량, 강수확률). 서울시청 기준 |
 
 출처: [서울 열린데이터광장 — 서울시 공공자전거 실시간 대여정보](https://data.seoul.go.kr/dataList/OA-15493/A/1/datasetView.do), [Open-Meteo](https://open-meteo.com/).
 

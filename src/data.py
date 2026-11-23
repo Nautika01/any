@@ -14,8 +14,8 @@ STEPS_PER_WEEK = 7 * STEPS_PER_DAY
 
 
 def load_snapshots(data_dir: Path = DATA) -> pd.DataFrame:
-    """data/raw 의 일별 파일을 모두 읽어 (ts, station_id, bikes) 긴 표로 돌려준다."""
-    files = sorted((data_dir / "raw").glob("*.csv.gz"))
+    """data/raw/날짜/시각.csv.gz 를 모두 읽어 (ts, station_id, bikes) 긴 표로 돌려준다."""
+    files = sorted((data_dir / "raw").glob("*/*.csv.gz"))
     if not files:
         return pd.DataFrame({"ts": pd.to_datetime([]), "station_id": [], "bikes": []})
     df = pd.concat((pd.read_csv(f) for f in files), ignore_index=True)
