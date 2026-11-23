@@ -5,10 +5,11 @@
 방법의 출처는 공개 노트북(goodpjw2008, Alex Chilton, megayak, davutkursun)이고 코드는 새로 썼다.
 
 누수 방지: 사기율은 정답을 쓰므로 반드시 겹 안에서 센다.
-  - 검증 겹과 테스트 행: 나머지 학습 겹 전체에서 센다.
-  - 학습 행(겹 g): 검증 겹과 자기 겹 g를 뺀 나머지에서 센다. 어떤 행도 자기 정답을 보지 않는다.
+  - 검증 겹과 테스트 행: 나머지 학습 행 전체에서 센다.
+  - 학습 행: 학습 행을 5묶음으로 나눠 자기 묶음을 뺀 나머지에서 센다. 어떤 행도 자기 정답을 보지 않는다.
+    묶음을 나누는 시드(--enc-seed)를 바꿔 여러 번 돌린 뒤 blend.py로 평균하면 인코딩 잡음이 줄어든다.
 
-사용법:  python train_te.py <실험이름> [--stage glm|trees] [--no-digits] [--shuffle-check]
+사용법:  python train_te.py <실험이름> [--stage glm|trees] [--no-digits] [--shuffle-check] [--enc-seed N]
 결과:    out/<실험이름>_oof.npy, out/<실험이름>_submission.csv
 """
 from __future__ import annotations
@@ -70,51 +71,48 @@ def make_keys(df: pd.DataFrame, digits: bool = True) -> dict[str, np.ndarray]:
     return keys
 
 
-class FoldCounts:
-    """키별·겹별 사기 건수와 행 수. 한 번 세어 두고 겹을 빼는 식으로 사기율을 만든다."""
+def encode(codes: np.ndarray, y: np.ndarray, group: np.ndarray, n_groups: int) -> np.ndarray:
+    """키 코드를 평활한 사기율(로짓)로 바꾼다.
 
-    def __init__(self, codes: np.ndarray, y: np.ndarray, fold: np.ndarray, n_folds: int):
-        n_train = len(y)
-        self.codes, self.fold, self.n_train = codes, fold, n_train
-        size = int(codes.max()) + 1
-        self.cnt = np.zeros((n_folds, size))
-        self.pos = np.zeros((n_folds, size))
-        for g in range(n_folds):
-            rows = codes[:n_train][fold == g]
-            self.cnt[g] = np.bincount(rows, minlength=size)
-            self.pos[g] = np.bincount(rows, weights=y[fold == g], minlength=size)
-        self.cnt_all, self.pos_all = self.cnt.sum(0), self.pos.sum(0)
-        self.pos_fold, self.cnt_fold = self.pos.sum(1), self.cnt.sum(1)
+    group은 학습 행마다 묶음 번호(0..n_groups-1), 세지 않을 행(검증 겹)은 -1.
+    묶음 p의 학습 행은 다른 묶음에서만 세고, 그 밖의 행(검증 겹·테스트)은 모든 묶음에서 센다.
+    어떤 행도 자기 정답을 보지 않는다.
+    """
+    n = len(y)
+    size = int(codes.max()) + 1
+    used = group >= 0
+    flat = group[used] * size + codes[:n][used]
+    cnt = np.bincount(flat, minlength=n_groups * size).reshape(n_groups, size)
+    pos = np.bincount(flat, weights=y[used], minlength=n_groups * size).reshape(n_groups, size)
+    cnt_all, pos_all = cnt.sum(0), pos.sum(0)
+    n_g, p_g = cnt.sum(1), pos.sum(1)
 
-    def encode(self, holdout: int | None) -> np.ndarray:
-        """holdout 겹을 검증으로 뗐을 때의 사기율(로짓). holdout=None이면 전체 학습용.
-
-        학습 행은 (holdout과) 자기 겹을 뺀 나머지에서, 검증·테스트 행은 holdout만 뺀 나머지에서 센다.
-        """
-        codes, fold, n = self.codes, self.fold, self.n_train
-        cnt, pos = self.cnt_all.copy(), self.pos_all.copy()
-        n_tot, p_tot = self.cnt_fold.sum(), self.pos_fold.sum()
-        if holdout is not None:
-            cnt -= self.cnt[holdout]; pos -= self.pos[holdout]
-            n_tot -= self.cnt_fold[holdout]; p_tot -= self.pos_fold[holdout]
-        out = np.empty(len(codes))
-        # 검증·테스트 행(그리고 일단 전부)
-        out[:] = (pos[codes] + M * p_tot / n_tot) / (cnt[codes] + M)
-        # 학습 행은 자기 겹을 추가로 뺀다
-        for g in range(len(self.cnt)):
-            if g == holdout:
-                continue
-            rows = np.flatnonzero(fold == g)
-            c = codes[rows]
-            prior = (p_tot - self.pos_fold[g]) / (n_tot - self.cnt_fold[g])
-            out[rows] = (pos[c] - self.pos[g][c] + M * prior) / (cnt[c] - self.cnt[g][c] + M)
-        out = np.clip(out, 1e-6, 1 - 1e-6)
-        return np.log(out / (1 - out))
+    out = (pos_all[codes] + M * p_g.sum() / n_g.sum()) / (cnt_all[codes] + M)
+    for g in range(n_groups):
+        rows = np.flatnonzero(group == g)
+        c = codes[rows]
+        prior = (p_g.sum() - p_g[g]) / (n_g.sum() - n_g[g])
+        out[rows] = (pos_all[c] - pos[g][c] + M * prior) / (cnt_all[c] - cnt[g][c] + M)
+    out = np.clip(out, 1e-6, 1 - 1e-6)
+    return np.log(out / (1 - out))
 
 
-def build_matrix(df, keys, counts, holdout):
+def make_groups(fold: np.ndarray, holdout: int | None, enc_seed: int) -> np.ndarray:
+    """인코딩용 묶음. enc_seed 0은 바깥 겹을 그대로 쓰고, 그 밖에는 학습 행을 무작위로 5등분한다."""
+    if enc_seed == 0:
+        group = fold.copy()
+    else:
+        group = np.random.default_rng(1000 * enc_seed + (holdout if holdout is not None else 99)
+                                      ).integers(0, FOLDS, len(fold))
+    if holdout is not None:
+        group[fold == holdout] = -1
+    return group
+
+
+def build_matrix(df, keys, y, group):
     """모델 입력. 인코딩(로짓) + 원본 수치 + 값 빈도 + 참/거짓."""
-    cols = {f"te|{k}": fc.encode(holdout) for k, fc in counts.items()}
+    yf = y.astype(float)
+    cols = {f"te|{k}": encode(code, yf, group, FOLDS) for k, code in keys.items()}
     for c in DECIMALS + INTS:
         cols[c] = df[c].to_numpy(dtype=float)
     for c in DECIMALS:  # 정확히 같은 값이 학습+테스트에 몇 번 나오는지(정답을 쓰지 않는다)
@@ -165,7 +163,8 @@ def fit_trees(X, y, margin, fit_rows, stop_rows=None, rounds=None):
                                                         num_iteration=rounds)), rounds
 
 
-def run(name: str, stage: str = "trees", digits: bool = True, shuffle: bool = False) -> float:
+def run(name: str, stage: str = "trees", digits: bool = True, shuffle: bool = False,
+        enc_seed: int = 0) -> float:
     from sklearn.model_selection import train_test_split
 
     train, test = load()
@@ -179,13 +178,12 @@ def run(name: str, stage: str = "trees", digits: bool = True, shuffle: bool = Fa
 
     both = pd.concat([train.drop(columns=TARGET), test], ignore_index=True)
     keys = make_keys(both, digits)
-    counts = {k: FoldCounts(code, y.astype(float), fold, FOLDS) for k, code in keys.items()}
     print(f"키 {len(keys)}개", flush=True)
 
     all_rows, test_rows = np.arange(n), np.arange(n, len(both))
     oof, scores, rounds_used = np.zeros(n), [], []
     for f in range(1 if shuffle else FOLDS):
-        X = build_matrix(both, keys, counts, holdout=f)
+        X = build_matrix(both, keys, y, make_groups(fold, f, enc_seed))
         tr, va = np.flatnonzero(fold != f), np.flatnonzero(fold == f)
         glm = fit_glm(X, y, tr)
         margin = np.zeros(len(both))
@@ -209,7 +207,7 @@ def run(name: str, stage: str = "trees", digits: bool = True, shuffle: bool = Fa
     print(f"{name}: CV AUC {total:.5f} (겹별 평균 {np.mean(scores):.5f} ± {np.std(scores):.5f})")
 
     # 테스트 예측은 전체 학습 행으로 한 번 더 맞춘 모델로 만든다(인코딩을 더 많은 행에서 센다).
-    X = build_matrix(both, keys, counts, holdout=None)
+    X = build_matrix(both, keys, y, make_groups(fold, None, enc_seed))
     glm = fit_glm(X, y, all_rows)
     margin = np.zeros(len(both))
     margin[:] = glm(np.arange(len(both)))
@@ -233,5 +231,7 @@ if __name__ == "__main__":
     ap.add_argument("--stage", choices=["glm", "trees"], default="trees")
     ap.add_argument("--no-digits", action="store_true", help="자릿수 키 없이 값 키만 쓴다")
     ap.add_argument("--shuffle-check", action="store_true", help="정답을 섞어 누수를 점검한다")
+    ap.add_argument("--enc-seed", type=int, default=0,
+                    help="인코딩용 학습 행 분할의 시드. 0은 바깥 겹 그대로, 그 밖은 무작위 5등분")
     a = ap.parse_args()
-    run(a.name, a.stage, not a.no_digits, a.shuffle_check)
+    run(a.name, a.stage, not a.no_digits, a.shuffle_check, a.enc_seed)
