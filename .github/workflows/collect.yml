@@ -32,5 +32,9 @@ jobs:
           git add data
           git diff --cached --quiet && exit 0
           git commit -q -m "data: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M')"
-          git pull -q --rebase
-          git push -q
+          # 다른 커밋과 겹쳐 푸시가 거절되면 최신 내용을 받아 다시 시도한다
+          for i in 1 2 3; do
+            git pull -q --rebase && git push -q && exit 0
+            sleep 5
+          done
+          exit 1
