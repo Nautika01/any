@@ -1,6 +1,6 @@
 """Playground S6E11 (카드 사기 탐지) — 5겹 교차검증으로 학습하고 제출 파일을 만든다.
 
-사용법:  python train.py <실험이름> [--model logreg|lgbm] [--features base|v1]
+사용법:  python train.py <실험이름> [--model logreg|lgbm] [--features base|count|ratio|combo|all]
 결과:    out/<실험이름>_oof.npy, out/<실험이름>_submission.csv
 """
 from __future__ import annotations
@@ -36,7 +36,50 @@ def features_base(df: pd.DataFrame) -> pd.DataFrame:
     return X
 
 
-FEATURES = {"base": features_base}
+FLAGS = ["is_foreign_transaction", "is_new_merchant", "used_vpn", "ip_country_mismatch",
+         "billing_shipping_mismatch", "is_ai_generated_scam_attempt"]
+
+
+def add_risk_count(X: pd.DataFrame) -> pd.DataFrame:
+    """위험 신호 개수. 참/거짓 6개 합과, CVV 재시도·과거 분쟁·무인증까지 더한 합."""
+    X["n_flags"] = X[FLAGS].sum(axis=1).astype("int8")
+    X["n_risk"] = (X["n_flags"] + (X["cvv_retry_count"] > 0) + (X["prior_disputes"] > 0)
+                   + (X["auth_method"].astype(str) == "No Authentication")).astype("int8")
+    return X
+
+
+def add_ratios(X: pd.DataFrame) -> pd.DataFrame:
+    """금액 대비 잔고 비율과, 거래 빈도·간격을 묶은 비율."""
+    X["amount_to_balance"] = X["amount_usd"] / X["account_balance_usd"]
+    X["balance_after"] = X["account_balance_usd"] - X["amount_usd"]
+    X["amount_per_txn24h"] = X["amount_usd"] / (X["txn_count_last_24h"] + 1)
+    X["txn_rate"] = X["txn_count_last_24h"] / (X["hours_since_last_txn"] + 1)
+    return X
+
+
+def add_combos(X: pd.DataFrame) -> pd.DataFrame:
+    """가맹점 종류 × 인증 방식, 가맹점 종류 × 채널 조합."""
+    for a, b in [("merchant_category", "auth_method"), ("merchant_category", "channel")]:
+        X[f"{a}_x_{b}"] = (X[a].astype(str) + "|" + X[b].astype(str)).astype("category")
+    return X
+
+
+def _with(*steps):
+    def build(df: pd.DataFrame) -> pd.DataFrame:
+        X = features_base(df)
+        for step in steps:
+            X = step(X)
+        return X
+    return build
+
+
+FEATURES = {
+    "base": features_base,
+    "count": _with(add_risk_count),
+    "ratio": _with(add_ratios),
+    "combo": _with(add_combos),
+    "all": _with(add_risk_count, add_ratios, add_combos),
+}
 
 
 def fit_predict_logreg(Xtr, ytr, Xva, Xte):
