@@ -18,7 +18,8 @@
 `data/` 에 대회 파일 3개(train.csv, test.csv, sample_submission.csv)를 둔다. 저장소에는 올리지 않는다.
 
 ```bash
-python train.py e02_lgbm --model lgbm
+python train.py e11_leaves8_reg --model lgbm --set num_leaves=8 learning_rate=0.03 min_child_samples=200 reg_lambda=10 colsample_bytree=0.5
+python blend.py e14_blend e09_leaves4 e11_leaves8_reg e13_catboost
 ```
 
 ## 규칙
