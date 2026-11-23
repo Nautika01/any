@@ -8,7 +8,7 @@
   - pytabkit은 기본으로 검증 세트에서 가장 좋은 에폭을 고르는데, 여기서는 검증 세트가 채점 겹이다.
     stop_epoch를 n_epochs와 같게 두어 마지막 에폭을 그대로 쓴다. 채점 겹은 아무것도 고르지 않는다.
 
-사용법:  python train_mlp.py <실험이름> [--seed N] [--folds 0 1 ...] [--n-ens N]
+사용법:  python train_mlp.py <실험이름> [--seed N] [--folds 0 1 ...] [--n-ens N] [--digit-cats]
 결과:    out/<실험이름>_oof.npy, out/<실험이름>_submission.csv (테스트 예측은 5겹 모델의 평균)
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ PARAMS = dict(verbosity=0, val_metric_name="1-auc_ovr",
               tfms=["one_hot", "median_center", "robust_scale", "smooth_clip", "embedding", "l2_normalize"])
 
 
-def build_inputs(both: pd.DataFrame, n_train: int):
+def build_inputs(both: pd.DataFrame, n_train: int, digit_cats: bool = False):
     """정답을 쓰지 않는 입력. 반환: (표, 범주형 열 이름, 겹 안에서 인코딩할 키 코드)."""
     X = pd.DataFrame(index=both.index)
     cats: list[str] = []
@@ -64,6 +64,16 @@ def build_inputs(both: pd.DataFrame, n_train: int):
         add_cat(f"{c}|int", np.floor(both[c].to_numpy()).astype(np.int64))
     for c in CENTS:  # 센트를 범주로
         add_cat(f"{c}|cents", (np.round(both[c].to_numpy() * 100) % 100).astype(np.int64))
+    if digit_cats:  # 숫자가 쓰인 자릿수를 범주로: 나머지 열의 센트, 첫 소수 자리, 정수부 끝 두 자리, 앞 두 자리
+        for c in DECIMALS:
+            v = np.round(both[c].to_numpy() * 100).astype(np.int64)
+            whole = v // 100
+            if c not in CENTS:
+                add_cat(f"{c}|cents", v % 100)
+            add_cat(f"{c}|first_decimal", (v // 10) % 10)
+            add_cat(f"{c}|int_last2", whole % 100)
+            lead = whole.astype(str)
+            add_cat(f"{c}|lead2", np.char.str_len(lead) * 100 + np.array([int(t[:2]) for t in lead]))
     for c, nb in BINS:  # 분위 구간(정답을 쓰지 않는다). 경계는 학습 행에서만 잡는다
         edges = np.unique(np.quantile(both[c].to_numpy()[:n_train], np.linspace(0, 1, nb + 1)[1:-1]))
         add_cat(f"{c}|q{nb}", np.searchsorted(edges, both[c].to_numpy(), side="right"))
@@ -81,7 +91,8 @@ def build_inputs(both: pd.DataFrame, n_train: int):
     return X, cats, te_keys
 
 
-def run(name: str, seed: int = SEED, only_folds: list[int] | None = None, n_ens: int = 8) -> float:
+def run(name: str, seed: int = SEED, only_folds: list[int] | None = None, n_ens: int = 8,
+        digit_cats: bool = False) -> float:
     import torch
     from pytabkit import RealMLP_TD_Classifier
 
@@ -94,7 +105,7 @@ def run(name: str, seed: int = SEED, only_folds: list[int] | None = None, n_ens:
         fold[va] = k
 
     both = pd.concat([train.drop(columns=TARGET), test], ignore_index=True)
-    X, cats, te_keys = build_inputs(both, n)
+    X, cats, te_keys = build_inputs(both, n, digit_cats)
     print(f"입력 {X.shape[1] + len(te_keys)}열, 그중 범주형 {len(cats)}열", flush=True)
 
     oof, pred, scores = np.zeros(n), np.zeros(len(test)), []
@@ -143,5 +154,6 @@ if __name__ == "__main__":
     ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--folds", type=int, nargs="*", default=None, help="일부 겹만 돌려 볼 때")
     ap.add_argument("--n-ens", type=int, default=8, help="함께 학습해 평균하는 신경망 수")
+    ap.add_argument("--digit-cats", action="store_true", help="자릿수(센트·첫 소수 자리·앞뒤 두 자리)를 범주로 추가")
     a = ap.parse_args()
-    run(a.name, a.seed, a.folds, a.n_ens)
+    run(a.name, a.seed, a.folds, a.n_ens, a.digit_cats)
