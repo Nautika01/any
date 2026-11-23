@@ -5,7 +5,7 @@
 ## 진행 상황
 
 - [x] 수집기: 대여소 실시간 현황 + 서울 날씨 (`src/collect.py`)
-- [x] 자동 수집: GitHub Actions 15분 주기 (`.github/workflows/collect.yml`)
+- [x] 자동 수집: GitHub Actions 작업이 15분 눈금마다 수집하고 스스로 다음 실행을 이어 간다 (`.github/workflows/collect.yml`, `scripts/collect_loop.sh`)
 - [x] 분석 뼈대: 15분 격자 변환, 기준선 2종, 학습용 특성, 평가, 수집 상태 점검 (`src/`)
 - [ ] 탐색 분석: 시간대·요일·날씨별 패턴 (데이터 수일분 필요)
 - [ ] 기준선 측정 (1주일분 필요)
