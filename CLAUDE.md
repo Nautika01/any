@@ -15,6 +15,7 @@
 - `src/features.py` — 학습용 표. 새 특성을 넣으면 `tests/test_pipeline.py`의 누수 테스트가 통과해야 한다.
 - `src/evaluate.py` — 시간 순서 분할과 MAE. 모든 모델이 예측한 칸에서만 채점한다. 새 모델은 `evaluate()`에 넣어 기준선과 함께 잰다.
 - `src/health.py` — 수집 상태 점검.
+- `src/explore.py` — 탐색 분석(시간대 패턴, 빈 대여소, 예측 거리별 변화 크기).
 - `experiments.md` — 실험 기록.
 - `kaggle/` — 따릉이와 무관한 Kaggle 대회 작업. 대회별 폴더에 자체 README·실험 기록·규칙이 있다. 대회 데이터와 산출물은 커밋하지 않는다.
 
@@ -23,6 +24,7 @@
 - 테스트: `python3 -m pytest -q tests`
 - 수집: `SEOUL_API_KEY=... python3 src/collect.py`
 - 수집 상태: `python3 src/health.py`
+- 탐색 분석: `python3 src/explore.py`
 - 기준선 평가: `python3 src/evaluate.py [검증 일수]`
 
 클라우드 세션에서는 따릉이 API(openapi.seoul.go.kr:8088, 일반 HTTP)에 접속할 수 없다.
