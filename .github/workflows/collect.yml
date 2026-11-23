@@ -1,13 +1,20 @@
 name: collect
 
+# 한 번 시작되면 5시간 30분 동안 15분 눈금에 맞춰 수집을 되풀이하고,
+# 끝나기 직전에 다음 실행을 스스로 예약한다(이어달리기).
+# GitHub 예약 실행은 건너뛰는 일이 잦아 15분 간격을 맡길 수 없어서 이렇게 한다.
+# 예약(schedule)은 이어달리기가 끊겼을 때 다시 시작시키는 용도로만 남긴다.
+# 멈추려면: 실행 중인 작업을 Cancel 하면 다음 실행을 예약하지 않는다.
 on:
   schedule:
-    - cron: "7,22,37,52 * * * *"  # 15분마다 (정각은 GitHub 쪽이 붐벼서 피함)
+    - cron: "5 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
+  actions: write
 
+# 동시에 하나만 돈다. 실행 중에 새로 들어온 것은 대기했다가 이어받는다.
 concurrency:
   group: collect
   cancel-in-progress: false
@@ -15,26 +22,21 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Collect
+      - name: Collect every 15 minutes
         env:
           SEOUL_API_KEY: ${{ secrets.SEOUL_API_KEY }}
-        run: python src/collect.py
-      - name: Commit data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data
-          git diff --cached --quiet && exit 0
-          git commit -q -m "data: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M')"
-          # 다른 커밋과 겹쳐 푸시가 거절되면 최신 내용을 받아 다시 시도한다
-          for i in 1 2 3; do
-            git pull -q --rebase && git push -q && exit 0
-            sleep 5
-          done
-          exit 1
+          bash scripts/collect_loop.sh
+      - name: Hand over to the next run
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run collect.yml --ref "$GITHUB_REF_NAME"
