@@ -1,6 +1,6 @@
 """Playground S6E11 (카드 사기 탐지) — 5겹 교차검증으로 학습하고 제출 파일을 만든다.
 
-사용법:  python train.py <실험이름> [--model logreg|lgbm] [--features base|count|ratio|combo|all]
+사용법:  python train.py <실험이름> [--model logreg|spline|lgbm|catboost] [--features base|count|ratio|combo|all] [--set 키=값 ...]
 결과:    out/<실험이름>_oof.npy, out/<실험이름>_submission.csv
 """
 from __future__ import annotations
@@ -99,6 +99,49 @@ def fit_predict_logreg(Xtr, ytr, Xva, Xte):
     return model.predict_proba(Xva)[:, 1], model.predict_proba(Xte)[:, 1], None
 
 
+def fit_predict_spline(Xtr, ytr, Xva, Xte):
+    """수치형을 스플라인으로 펼친 로지스틱 회귀(가산 모형). 꼬리가 긴 열은 로그 변환 후 펼친다."""
+    from sklearn.compose import ColumnTransformer
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, SplineTransformer
+
+    cats = [c for c in Xtr.columns if Xtr[c].dtype.name == "category"]
+    small = [c for c in Xtr.columns if c not in cats and Xtr[c].nunique() <= 30]  # 개수·시각·참거짓
+    nums = [c for c in Xtr.columns if c not in cats and c not in small]
+    spline = make_pipeline(FunctionTransformer(np.log1p),
+                           SplineTransformer(n_knots=12, degree=3, knots="quantile"))
+    model = make_pipeline(
+        ColumnTransformer([("num", spline, nums),
+                           ("cat", OneHotEncoder(handle_unknown="ignore"), cats + small)]),
+        LogisticRegression(max_iter=3000, C=1.0),
+    )
+    model.fit(Xtr, ytr)
+    return model.predict_proba(Xva)[:, 1], model.predict_proba(Xte)[:, 1], None
+
+
+def fit_predict_catboost(Xtr, ytr, Xva, Xte):
+    """CatBoost. 나무 개수는 LightGBM과 같이 학습 겹 안의 10%로 정한다."""
+    from catboost import CatBoostClassifier
+    from sklearn.model_selection import train_test_split
+
+    cats = [c for c in Xtr.columns if Xtr[c].dtype.name == "category"]
+    conv = lambda X: X.assign(**{c: X[c].astype(str) for c in cats})
+    Xfit, Xstop, yfit, ystop = train_test_split(
+        conv(Xtr), ytr, test_size=0.1, stratify=ytr, random_state=SEED)
+    params = dict(iterations=5000, learning_rate=0.05, depth=4, l2_leaf_reg=5,
+                  eval_metric="AUC", random_seed=SEED, verbose=0, thread_count=4,
+                  cat_features=cats, od_type="Iter", od_wait=200)
+    params.update(LGBM_OVERRIDES)
+    model = CatBoostClassifier(**params)
+    model.fit(Xfit, yfit, eval_set=(Xstop, ystop), use_best_model=True)
+    return (model.predict_proba(conv(Xva))[:, 1], model.predict_proba(conv(Xte))[:, 1],
+            model.get_best_iteration())
+
+
+LGBM_OVERRIDES: dict = {}  # --set 으로 바꾼 LightGBM·CatBoost 설정
+
+
 def fit_predict_lgbm(Xtr, ytr, Xva, Xte):
     """학습 겹 안에서 10%를 따로 떼어 나무 개수(조기 종료)를 정한다.
 
@@ -110,14 +153,18 @@ def fit_predict_lgbm(Xtr, ytr, Xva, Xte):
 
     Xfit, Xstop, yfit, ystop = train_test_split(
         Xtr, ytr, test_size=0.1, stratify=ytr, random_state=SEED)
-    model = lgb.LGBMClassifier(
-        n_estimators=5000, learning_rate=0.05, num_leaves=31,
-        subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
-        random_state=SEED, verbose=-1,
-    )
-    model.fit(Xfit, yfit, eval_set=[(Xstop, ystop)], eval_metric="auc",
-              callbacks=[lgb.early_stopping(100, verbose=False)])
+    params = dict(n_estimators=5000, learning_rate=0.05, num_leaves=31,
+                  subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
+                  random_state=SEED, verbose=-1)
+    params.update(LGBM_OVERRIDES)
+    model = lgb.LGBMClassifier(**params)
+    model.fit(Xfit, yfit, eval_X=Xstop, eval_y=ystop, eval_metric="auc",
+              callbacks=[lgb.early_stopping(max(100, int(5 / params["learning_rate"])), verbose=False)])
     return model.predict_proba(Xva)[:, 1], model.predict_proba(Xte)[:, 1], model.best_iteration_
+
+
+MODELS = {"logreg": fit_predict_logreg, "spline": fit_predict_spline,
+          "lgbm": fit_predict_lgbm, "catboost": fit_predict_catboost}
 
 
 def run(name: str, model: str, feats: str) -> float:
@@ -130,10 +177,7 @@ def run(name: str, model: str, feats: str) -> float:
     pred = np.zeros(len(test))
     scores = []
     for k, (tr, va) in enumerate(StratifiedKFold(FOLDS, shuffle=True, random_state=SEED).split(X, y)):
-        if model == "logreg":
-            p_va, p_te, it = fit_predict_logreg(X.iloc[tr], y[tr], X.iloc[va], Xte)
-        else:
-            p_va, p_te, it = fit_predict_lgbm(X.iloc[tr], y[tr], X.iloc[va], Xte)
+        p_va, p_te, it = MODELS[model](X.iloc[tr], y[tr], X.iloc[va], Xte)
         oof[va] = p_va
         pred += p_te / FOLDS
         scores.append(roc_auc_score(y[va], p_va))
@@ -151,7 +195,12 @@ def run(name: str, model: str, feats: str) -> float:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("name")
-    ap.add_argument("--model", choices=["logreg", "lgbm"], default="lgbm")
+    ap.add_argument("--model", choices=sorted(MODELS), default="lgbm")
     ap.add_argument("--features", choices=sorted(FEATURES), default="base")
+    ap.add_argument("--set", nargs="*", default=[], metavar="키=값",
+                    help="LightGBM·CatBoost 설정 덮어쓰기. 예: --set num_leaves=7 learning_rate=0.02")
     a = ap.parse_args()
+    for kv in a.set:
+        k, v = kv.split("=", 1)
+        LGBM_OVERRIDES[k] = float(v) if "." in v or "e" in v else int(v)
     run(a.name, a.model, a.features)
