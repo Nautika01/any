@@ -23,7 +23,12 @@
 ```bash
 python train.py e11_leaves8_reg --model lgbm --set num_leaves=8 learning_rate=0.03 min_child_samples=200 reg_lambda=10 colsample_bytree=0.5
 python blend.py e14_blend e09_leaves4 e11_leaves8_reg e13_catboost
-python train_te.py e16_te_trees            # 현재 최고(CV 0.9504)
+python train_te.py e16_te_trees            # 목표 인코딩 + GLM + 얕은 나무(CV 0.9504)
+for s in 0 1 2 3; do python train_te.py e19_te_s$s --enc-seed $s; done
+python blend.py e19_te_bag4 e19_te_s0 e19_te_s1 e19_te_s2 e19_te_s3
+python train_mlp.py e20_realmlp && python train_mlp.py e21_realmlp_s43 --seed 43
+python blend.py e22_realmlp_2seed e20_realmlp e21_realmlp_s43
+python blend.py e23_bag_realmlp e19_te_bag4=0.6 e22_realmlp_2seed=0.4   # 현재 최고(CV 0.9511)
 python train_te.py chk --shuffle-check     # 누수 점검: 0.5 근처여야 한다
 ```
 
