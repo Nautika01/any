@@ -32,6 +32,26 @@ python blend.py e23_bag_realmlp e19_te_bag4=0.6 e22_realmlp_2seed=0.4   # 현재
 python train_te.py chk --shuffle-check     # 누수 점검: 0.5 근처여야 한다
 ```
 
+## 언어 모델 (Kaggle GPU에서 실행)
+
+GPU가 필요해서 이 저장소의 다른 실험과 달리 Kaggle 노트북에서 돌린다. 방법과 출처는 `lm_kaggle.py` 머리말에 있다.
+
+1. Kaggle에서 새 노트북을 만들고 File → Import Notebook으로 `lm_kaggle.ipynb`를 올린다.
+2. 오른쪽 설정에서 Accelerator를 **GPU T4 x2**, Internet을 **On**으로 하고, Add Input으로 대회 데이터를 추가한다.
+3. 마지막 셀의 `FOLDS`를 `[0, 1]`로 두고 Save Version → **Save & Run All**. 끝나면 `[2, 3]`, `[4]`로 두 번 더 돌린다.
+   한 세션은 최대 12시간이고, 스크립트는 10.5시간 안에 끝나도록 에폭 수와 채점 횟수를 스스로 맞춘다.
+   GPU 주간 한도(30시간)를 거의 다 쓰므로 한 세션이 끝난 뒤 남은 시간을 확인하고 다음을 시작한다.
+4. 각 실행의 Output에서 `lm_fold*_oof.npy`, `lm_fold*_test.npy`, `lm_fold*.json`을 내려받아 `out/lm/`에 둔다.
+5. 다섯 겹이 모이면:
+
+```bash
+python lm_assemble.py e30_lm                                   # out/e30_lm_oof.npy, 제출 파일
+python blend.py e31_blend_lm e23_bag_realmlp=0.65 e30_lm=0.35  # 가중치는 겹 밖에서 다시 고른다
+```
+
+`lm_kaggle.py`를 고치면 `python lm_assemble.py --make-notebook`으로 노트북 파일을 다시 만든다.
+GPU 실행은 아직 하지 않았다. CPU에서 작은 표본으로 학습·저장·이어하기·채점이 도는 것만 확인했다.
+
 ## 규칙
 
 - 정답을 쓰는 특성(목표 인코딩)은 겹 안에서만 계산한다. 바꾸면 `--shuffle-check`를 다시 돌린다.
