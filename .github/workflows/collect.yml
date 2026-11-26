@@ -5,10 +5,18 @@ name: collect
 # GitHub 예약 실행은 건너뛰는 일이 잦아 15분 간격을 맡길 수 없어서 이렇게 한다.
 # 예약(schedule)은 이어달리기가 끊겼을 때 다시 시작시키는 용도로만 남긴다.
 # 멈추려면: 실행 중인 작업을 Cancel 하면 다음 실행을 예약하지 않는다.
+#
+# 수집이 연속 3회 실패하면 그 실행은 일찍 끝나고 다음 실행(다른 러너)이 이어받는다.
+# 다만 실행 두 번이 연달아 한 번도 수집하지 못했으면 러너 탓이 아니라 API나 키 문제로 보고,
+# 그다음부터는 일찍 끝내지 않고 끝까지 버틴다(실패한 실행이 몇 분마다 쏟아지지 않게).
 on:
   schedule:
     - cron: "5 * * * *"
   workflow_dispatch:
+    inputs:
+      failed_runs:
+        description: 직전까지 연달아 한 번도 수집하지 못한 실행 수. 이어달리기가 자동으로 넘긴다.
+        default: "0"
 
 permissions:
   contents: write
@@ -29,9 +37,13 @@ jobs:
         with:
           python-version: "3.12"
       - name: Collect every 15 minutes
+        id: loop
         env:
           SEOUL_API_KEY: ${{ secrets.SEOUL_API_KEY }}
+          FAILED_RUNS: ${{ inputs.failed_runs || '0' }}
         run: |
+          # 앞선 실행 두 번이 연달아 빈손이었으면 일찍 끝내지 않는다(MAX_FAILS=0)
+          if [ "$FAILED_RUNS" -ge 2 ]; then export MAX_FAILS=0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           bash scripts/collect_loop.sh
@@ -39,4 +51,14 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run collect.yml --ref "$GITHUB_REF_NAME"
+          HEALTHY: ${{ steps.loop.outputs.healthy }}
+          FAILED_RUNS: ${{ inputs.failed_runs || '0' }}
+        run: |
+          next=0
+          [ "$HEALTHY" = "true" ] || next=$(( FAILED_RUNS + 1 ))
+          # 요청이 시간 초과로 끊기는 일이 있어 몇 번 다시 시도한다
+          for i in 1 2 3; do
+            gh workflow run collect.yml --ref "$GITHUB_REF_NAME" -f failed_runs="$next" && exit 0
+            sleep 20
+          done
+          exit 1

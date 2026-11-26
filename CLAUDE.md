@@ -6,7 +6,7 @@
 ## 구조
 
 - `src/collect.py` — 수집기(표준 라이브러리만 사용). 1회 수집.
-- `scripts/collect_loop.sh`, `.github/workflows/collect.yml` — Actions 작업 하나가 5시간 30분 동안 15분 눈금마다 수집·커밋하고, 끝날 때 다음 실행을 스스로 건다. GitHub 예약(cron)은 자주 건너뛰어서 이어달리기가 끊겼을 때 되살리는 용도로만 쓴다. `collect` 실행이 하나도 돌고 있지 않으면 수동으로 한 번 실행한다.
+- `scripts/collect_loop.sh`, `.github/workflows/collect.yml` — Actions 작업 하나가 5시간 30분 동안 15분 눈금마다 수집·커밋하고, 끝날 때 다음 실행을 스스로 건다. 수집이 연속 3회 실패하면 일찍 끝내고 다음 실행(다른 러너)에 넘긴다. GitHub 예약(cron)은 자주 건너뛰어서 이어달리기가 끊겼을 때 되살리는 용도로만 쓴다. `collect` 실행이 하나도 돌고 있지 않으면 수동으로 한 번 실행한다.
 - `data/raw/YYYY-MM-DD/HHMM.csv.gz` — `ts, station_id, bikes` (KST). 수집 1회당 파일 하나, 한 번 쓰면 고치지 않는다.
 - `data/stations.csv` — 대여소 정보.
 - `data/weather/YYYY-MM.csv` — 수집 시각의 서울 날씨와, 그 시점에 나와 있던 1·2시간 뒤 예보(`fc_*`). 모델 특성에는 실측이 아니라 `fc_*`를 쓴다.
